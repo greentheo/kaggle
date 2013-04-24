@@ -16,8 +16,9 @@ bbEvalMain = function(solution, params){
   
     
   #generate a new sampleInd
-  params$sampIndLab=sample(1:params$labLen, round(.5*params$labLen)) 
-  params$sampIndUnLab=sample(1:params$unLabLen, round(.1*params$unLabLen))
+  #params$sampIndLab=sample(1:params$labLen, round(.75*params$labLen)) 
+  #params$sampIndUnLab=sample(1:params$unLabLen, round(.25*params$unLabLen))
+  #params$featSample = sample(1:params$unLabWidth, round(.25*params$unLabWidth))
   #res = try(sfClusterApplyLB(solution, bbEval, params=params))
   #clusterApplyLB(cl, 1:10, function(x)mean(runif(100)))
  
@@ -71,7 +72,7 @@ bbEval = function(solution){
         if(params$method == "lda"){
           mods[[labn]] = lda(x=labeledOVA[sampIndLab, feats], grouping=as.factor(labeledOVA[sampIndLab,1]))
           resLabProb[[labn]] = predict(mods[[labn]], labeledOVA[-sampIndLab, feats])$posterior
-          resUnlabProb[[labn]] = predict(mods[[labn]], unlabeled[sampIndUnLab, feats-1])$posterior       
+          resUnlabProb[[labn]] = predict(mods[[labn]], unlabeled[-sampIndUnLab, feats-1])$posterior       
         }
         
       }
@@ -86,7 +87,13 @@ bbEval = function(solution){
         resLabProb[[1]] = predict(mods[[1]], labeled[-sampIndLab, feats])$class
         resUnlabProb[[1]] = predict(mods[[1]], unlabeled[sampIndUnLab, feats-1])$class       
       }
-      
+      if(params$method== "ldaUnlab"){
+        #browser()  
+        mods[[1]] = lda(x=unlabeled[sampIndUnLab, params$featSample], 
+                        grouping=as.factor(solution[sampIndUnLab]))
+        resLabProb[[1]] = predict(mods[[1]], labeled[-sampIndLab, params$featSample+1])$class
+        resUnlabProb[[1]] = predict(mods[[1]], unlabeled[sampIndUnLab, params$featSample])$class 
+      }
     }    
     #assign classes to data points and get error measures
     
@@ -133,45 +140,55 @@ performancePlot = function(iterativeObj.eval,...,plotC = 1){
         matrix(unlist(x$evaluation$raw), nrow=2))
       )
     })
-    #plot the average of the group, and the max for both metrics
-    meanPerf = matrix(unlist(lapply(perfList, function(x){
-                      rowMeans(x)
-                      })), nrow=2)
-    maxPerf = matrix(unlist(lapply(perfList, function(x){
-      apply(x,1,max)
-    })), nrow=2)
-    
-    
-    plot(
-      meanPerf[1,], main="Labeling accuracy by Iteration",
-      type="l", ylim=c(min(c(meanPerf[1,], maxPerf[1,])), max(c(meanPerf[1,], maxPerf[1,])))
-    )
-    lines(
-      maxPerf[1,],
-      lty=2
-    )
-    legend("topright", c("avg", "max"), lty=c(1,2))
-    
-    
-    plot(
-      meanPerf[2,], main="Unlabeled Data Error by Iteration",
-      type="l", ylim=c(min(c(meanPerf[2,], maxPerf[2,])), max(c(meanPerf[2,], maxPerf[2,])))
-    )
-    lines(maxPerf[2,], lty=2)
-    legend("topright", c("avg", "max"), lty=c(1,2))
   
-    #now plot the number of signals being used
-    numFeats = lapply(iterativeObj.eval$history,function(x)colSums(x$solution))
-    avgFeat = unlist(lapply(numFeats, mean))
-    maxFeat = unlist(lapply(numFeats, max))
-    plot(avgFeat, type="l", main="Number of Features Used", 
-         ylim=c(min(c(avgFeat, maxFeat)), max(c(avgFeat, maxFeat)))
-         )
-    lines(maxFeat, lty=2)
-    legend("bottomright", c("avg", "max"), lty=c(1,2))
+  maxList = unlist(lapply(iterativeObj.eval$history, function(x){
+    which.max(x$evaluation$eval)
+  }))
+  #plot the average of the group, and the max for both metrics
+  meanPerf = matrix(unlist(lapply(perfList, function(x){
+                    rowMeans(x)
+                    })), nrow=2)
+  maxPerf = matrix(unlist(lapply(perfList, function(x){
+    apply(x,1,max)
+  })), nrow=2)
+  maxPerfEval = vector("list", length(perfList))
+  for(i in 1:length(perfList)){
+    maxPerfEval[[i]] = perfList[[i]][,maxList[i]] 
+  }
+  maxPerfEval = matrix(unlist(maxPerfEval), ncol = length(perfList))  
     
-    #plot the signals used and the variety in the population
-    plotFeatHistory(iterativeObj.eval)
+  plot(
+    meanPerf[1,], main="Labeling accuracy by Iteration",
+    type="l", ylim=c(min(c(meanPerf[1,], maxPerf[1,])), max(c(meanPerf[1,], maxPerf[1,])))
+  )
+  lines(
+    maxPerf[1,],
+    lty=2
+  )
+  lines(maxPerfEval[1, ], lty=3, col="red")
+  legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
+  
+  
+  plot(
+    meanPerf[2,], main="Unlabeled Data Error by Iteration",
+    type="l", ylim=c(min(c(meanPerf[2,], maxPerf[2,])), max(c(meanPerf[2,], maxPerf[2,])))
+  )
+  lines(maxPerf[2,], lty=2)
+  lines(maxPerfEval[2, ], lty=3, col='red')
+  legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
+
+  #now plot the number of signals being used
+  numFeats = lapply(iterativeObj.eval$history,function(x)colSums(x$solution))
+  avgFeat = unlist(lapply(numFeats, mean))
+  maxFeat = unlist(lapply(numFeats, max))
+  plot(avgFeat, type="l", main="Number of Features Used", 
+       ylim=c(min(c(avgFeat, maxFeat)), max(c(avgFeat, maxFeat)))
+       )
+  lines(maxFeat, lty=2)
+  legend("bottomright", c("avg", "max"), lty=c(1,2))
+  
+  #plot the signals used and the variety in the population
+  #plotFeatHistory(iterativeObj.eval)
   par(mfrow=c(1,1))
   
 }
@@ -182,6 +199,10 @@ prepareSlaves = function(){
   library(snowfall)
   library(MASS)
   library(Rmpi)
+  source('~/githubrepo/kaggle/blackbox/bbFuns.R')
+  source('~/githubrepo/RPackages/commonFuns.R')
+  libraryRaw('~/githubrepo/RPackages/ep/')
+  libraryRaw('~/githubrepo/RPackages/stocksOpt/')
 }
 
 updatePlot = function(filename="~/githubrepo/kaggle/iterativeObjTemp.RData", interval=10){
@@ -201,3 +222,4 @@ updatePlot = function(filename="~/githubrepo/kaggle/iterativeObjTemp.RData", int
   }
   
 }
+
