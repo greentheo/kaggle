@@ -150,7 +150,7 @@ params$sampIndUnLab = 1:nrow(bbTest)
 
 res = bbEval(featSet)
 
-write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(res$preds)), row.names=F, quote=F, col.names=F)
-write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(res$preds)), row.names=F, quote=F, col.names=F)
+#write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(res$preds)), row.names=F, quote=F, col.names=F)
+write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(featSet)), row.names=F, quote=F, col.names=F)
 
 stopCluster(cl)
