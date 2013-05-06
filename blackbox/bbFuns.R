@@ -76,6 +76,7 @@ bbEval = function(solution){
         }
         
       }
+     
     }else{
       if(params$method == "randomForest"){
         mods[[1]] = randomForest(x=labeled[sampIndLab, feats], y=as.factor(labeled[sampIndLab,1]),ntree=40)  
@@ -87,13 +88,25 @@ bbEval = function(solution){
         resLabProb[[1]] = predict(mods[[1]], labeled[-sampIndLab, feats])$class
         resUnlabProb[[1]] = predict(mods[[1]], unlabeled[sampIndUnLab, feats-1])$class       
       }
+      
+      #browser() 
       if(params$method== "ldaUnlab"){
-        #browser()  
+         
         mods[[1]] = lda(x=unlabeled[sampIndUnLab, params$featSample], 
                         grouping=as.factor(solution[sampIndUnLab]))
         resLabProb[[1]] = predict(mods[[1]], labeled[-sampIndLab, params$featSample+1])$class
         resUnlabProb[[1]] = predict(mods[[1]], unlabeled[sampIndUnLab, params$featSample])$class 
       }
+      if(params$method=="nnetUnLab"){
+        data = cbind(solution, as.matrix(unlabeled))
+        colnames(data)=gsub(pattern=' ', replacement='', x=colnames(data))
+        form = paste("solution~", paste(colnames(data)[2:11], sep='', collapse='+'),sep='',collapse='')
+        mods[[1]] = nnet(x=as.matrix(unlabeled), y=solution, size=1)
+        resLabProb[[1]] = predict(mods[[1]], )
+        colnames(unlabeled)
+      }
+      #browser() 
+      
     }    
     #assign classes to data points and get error measures
     
@@ -178,7 +191,11 @@ performancePlot = function(iterativeObj.eval,...,plotC = 1){
   legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
 
   #now plot the number of signals being used
-  numFeats = lapply(iterativeObj.eval$history,function(x)colSums(x$solution))
+  numFeats = lapply(iterativeObj.eval$history,function(x){
+    apply(x$solution, 2, function(y){
+      sum(as.numeric(y))
+    })
+    })
   avgFeat = unlist(lapply(numFeats, mean))
   maxFeat = unlist(lapply(numFeats, max))
   plot(avgFeat, type="l", main="Number of Features Used", 

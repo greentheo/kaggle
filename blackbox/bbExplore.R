@@ -5,10 +5,15 @@ library(biganalytics)
 library(parallel)
 library(MASS)
 library(Rmpi)
+library(nnet)
+library(neuralnet)
+library(triangle)
+library(amap)
 source('blackbox/bbFuns.R')
 source('../RPackages/commonFuns.R')
 libraryRaw('../RPackages/ep/')
 libraryRaw('../RPackages/stocksOpt/')
+
 
 #bbTest = read.big.matrix('blackbox/test.csv',header=F, skip=1,backingfile="bbTest", backingpath="/home/results/")
 #bbTrain = read.big.matrix('blackbox/train.csv',header=F, skip=1,backingfile="bbTrain", backingpath="/home/results/")
@@ -17,8 +22,32 @@ bbTrain = attach.big.matrix("/home/results/bbTrain.desc")
 bbTest = attach.big.matrix("/home/results/bbTest.desc")
 extra_data_sample=attach.big.matrix("/home/results/extra_data_sample.desc")
 
+bbTestNormSel = attach.big.matrix('/home/results/bbTestNormSel.desc')
+bbTrainNormSel = attach.big.matrix('/home/results/bbTrainNormSel.desc')
+
 #load('blackbox/extra_data_sample.RData')
 
+# #pca (only have to do it once)
+# colMeansTest = colMeans(bbTest[,])
+# colVarTest = apply(bbTest, 2, var)
+# 
+# bbTestNorm = (bbTest[,]-matrix(rep(colMeansTest, nrow(bbTest)), nrow=nrow(bbTest), byrow=T))#/
+# #   matrix(rep(colVarTest, nrow(bbTest)), nrow=nrow(bbTest), byrow=T)
+# bbTrainNorm = bbTrain[,]
+# bbTrainNorm[,2:ncol(bbTrain)] = (bbTrain[,2:ncol(bbTrain)]-matrix(rep(colMeansTest, nrow(bbTrain)), nrow=nrow(bbTrain), byrow=T))#/
+# #   matrix(rep(colVarTest, nrow(bbTrain)), nrow=nrow(bbTrain), byrow=T)
+
+# 
+# p = pca(bbTestNorm)
+# 
+# #save the PCA's and then use them to only use the first N components (representing 90% of the variance) in the analysis.
+# k = which(cumsum(p$eig)/sum(p$eig)>.9)[1]
+# bbTestNormSel = bbTestNorm%*%p$loadings[,1:k]
+# bbTrainNormSel = bbTrainNorm
+# bbTrainNormSel[,2:(k+1)] = bbTrainNorm[,2:ncol(bbTrain)]%*%p$loadings[,1:k]
+# 
+# as.big.matrix(bbTestNormSel,backingfile="bbTestNormSel", backingpath="/home/results/")
+# as.big.matrix(bbTrainNormSel,backingfile="bbTrainNormSel", backingpath="/home/results/")
 
 # #do a very simple randomForest on the lababled training data, and fit everything else into it
 sampleFeats = sample(2:ncol(bbTrain),round(ncol(bbTrain)*.5))
@@ -49,14 +78,24 @@ clusterCall(cl, prepareSlaves)
 #sfInit(parallel=T, cpus=4)
 #sfExport("prepareSlaves")
 #sfClusterCall(prepareSlaves)
+
+
 params = list(labeled="/home/results/bbTrain.desc", unlabeled="/home/results/extra_data_sample.desc",
                   labLen = nrow(bbTrain), unLabLen=nrow(extra_data_sample),
-                  sampIndLab=sample(1:nrow(bbTrain), round(.75*nrow(bbTrain))), 
-                  sampIndUnLab=sample(1:nrow(extra_data_sample), round(.1*nrow(extra_data_sample))),
+                  sampIndLab=sample(1:nrow(bbTrain), round(.10*nrow(bbTrain))), 
+                  sampIndUnLab=sample(1:nrow(extra_data_sample), round(.2*nrow(extra_data_sample))),
                   parallel=T, cpus=4, weights=c(1,0), cl=cl,returnResults=F,method="ldaUnlab", OVA=F,
                   featSample = sample(1:ncol(extra_data_sample), round(.25*ncol(extra_data_sample))),
                   unLabWidth = ncol(extra_data_sample)
               )
+params = list(labeled="/home/results/bbTrainNormSel.desc", unlabeled="/home/results/bbTestNormSel.desc",
+              labLen = nrow(bbTrainNormSel), unLabLen=nrow(bbTestNormSel),
+              sampIndLab=sample(1:nrow(bbTrainNormSel), round(.10*nrow(bbTrainNormSel))), 
+              sampIndUnLab=sample(1:nrow(bbTestNormSel), round(1*nrow(bbTestNormSel))),
+              parallel=T, cpus=4, weights=c(1,0), cl=cl,returnResults=F,method="ldaUnlab", OVA=F,
+              featSample = 1:30#ncol(bbTestNormSel),#sample(1:ncol(bbTestNormSel), round(.25*ncol(bbTestNormSel))),
+              unLabWidth = ncol(bbTestNormSel)
+)
 #clusterExport(cl, "params")
 pop=60
 
@@ -68,14 +107,15 @@ solsRep[mutsamp] = round(runif(length(mutsamp), min=1, max=9))
 iterations=100
 iterativeParams = list(
   objectName="saBBOpt",
-  saveon=10,
+  saveon=100,
   iterations = iterations,
   #initialSolution=as.data.frame(matrix(rbinom(pop*ncol(extra_data_sample), 1, prob=1/100),
   #                                     ncol(extra_data_sample),pop)),
   initialSolution=as.data.frame(matrix(solsRep,ncol=pop)),
   
-  iterativemethod="gaSimpleInt",#gaSimple",#salitebin",#"randbin",
-  iterativemethodparams=list(replacerate=.1, sadist=2, mutrate=.1, gacontdist=1),
+  iterativemethod="salitecont",#gaSimpleInt",#gaSimple",#salitebin",#"randbin",
+  iterativemethodparams=list(replacerate=.1, sadist=100, mutrate=.05, 
+                             gacontdist=1,min=1,max=9),
   optEval="bbEvalMain",
   optEvalparams=params
 )
@@ -83,9 +123,9 @@ iterativeParams = list(
 iterativeObj = list(iterativeParams=iterativeParams)
 
 # #load up a previous run and continue it another N trials
-# load("iterativeObjTemp.RData")
-# iterativeObj.eval=iterativeObj
-# iterativeObj$iterativeParams$iterations = iterativeObj$iterativeParams$iterations+1000
+load("iterativeObjTemp.RData")
+iterativeObj.eval=iterativeObj
+iterativeObj$iterativeParams$iterations = iterativeObj$iterativeParams$iterations+200
 
 iterativeObj.eval = iterativeOpt(iterativeObj)
 
@@ -110,6 +150,7 @@ params$sampIndUnLab = 1:nrow(bbTest)
 
 res = bbEval(featSet)
 
+write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(res$preds)), row.names=F, quote=F, col.names=F)
 write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(res$preds)), row.names=F, quote=F, col.names=F)
 
 stopCluster(cl)
