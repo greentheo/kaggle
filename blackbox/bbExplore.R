@@ -57,18 +57,18 @@ as.big.matrix(bbTestNormSel,backingfile="bbTestNormSel", backingpath="/home/resu
 data = bbTrainNormSel[,]
 colnames(data)=gsub(pattern=' ', replacement='', x=colnames(data))
 form = paste("solution~", paste(colnames(data)[1:50+1], sep='', collapse='+'),sep='',collapse='')
-nn = neuralnet(form, data=data, hidden=8, rep=2)
+nn = neuralnet(form, data=data, hidden=c(8), rep=2,threshold=.1)
 solsTrain = compute(nn, data[,2:51])
 solsTest = compute(nn, bbTestNormSel[,1:50])
 solsExtra = compute(nn, bbExtraNormSel[,1:50])
 
 #newLab = predict(rmodel, bbTrain[-sampleRows, sampleFeats])
 #error on the solutions
-errUnlab = errFunUnlab(as.numeric(solsTrain), bbTrain[,1]) 
-errNewLab = errFunlab(as.numeric(newLab), bbTrain[-sampleRows,1])
+errUnlab = errFunUnlab(round(solsTest$net.result), as.numeric(data[,1])) 
+errNewLab = errFunlab(round(solsTrain$net.result), data[,1])
 
 # #write solutions to output file
-# write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(sols)), row.names=F, quote=F, col.names=F)
+ write.table(file="blackbox/submission.csv", x=sprintf("%.1f", round(solsTest$net.result)), row.names=F, quote=F, col.names=F)
 
 
 #we have two objective functions:  
