@@ -9,8 +9,18 @@ errFunUnlab = function(sols, labelDat){
   return(err)
 }
 
+
 errFunlab = function(newLab, trueLab){
   length(which(newLab==trueLab))/length(trueLab)
+}
+errFunlabClass = function(newLab, trueLab){
+  errs = rep(0, length(unique(c(newLab, trueLab))))
+  classes= unique(c(newLab, trueLab))
+  names(errs)=classes
+  for(class in classes){
+    errs[class]=length(which(newLab[which(trueLab==class)]==class))/length(which(trueLab==class))
+  }
+  return(errs)
 }
 bbEvalMain = function(solution, params){
   
@@ -22,18 +32,22 @@ bbEvalMain = function(solution, params){
   #res = try(sfClusterApplyLB(solution, bbEval, params=params))
   #clusterApplyLB(cl, 1:10, function(x)mean(runif(100)))
  
-  clusterExport(cl,"params")
-  #res= lapply(solution, bbEval)
-  res = parLapplyLB(cl, solution, bbEval)
+  #clusterExport(cl,"params")
+  res= lapply(solution, bbEval)
+  #res = parLapplyLB(cl, solution, bbEval)
   
   #transfrom results into a final score (since we have more than one error metric)
   errLab = unlist(lapply(res, function(x)return(x$errLab)))
   errUnLab = unlist(lapply(res, function(x)return(x$errUnLab)))
+  errLabClassSD = unlist(lapply(res, function(x)return(x$errLabClassSD)))
+  
   #errLab = rep(0, length(errLab))
   errLab[names(errLab)[sort(errLab, decreasing=F, index.return=T)$ix]] = c(1:length(errLab))
   #errUnLab = rep(0, length(errUnLab))
   errUnLab[names(errUnLab)[sort(errUnLab, decreasing=F, index.return=T)$ix]] =c(1:length(errUnLab))
-  finalErr = params$weights %*% rbind(errLab, errUnLab)
+  errLabClassSD[names(errLabClassSD)[sort(errLabClassSD, decreasing=F, index.return=T)$ix]] =c(1:length(errLabClassSD))
+  
+  finalErr = params$weights %*% rbind(errLab, errUnLab, errLabClassSD)
   
   return(list(eval=finalErr, raw=res))
 }
@@ -98,10 +112,14 @@ bbEval = function(solution){
         resUnlabProb[[1]] = predict(mods[[1]], unlabeled[sampIndUnLab, params$featSample])$class 
       }
       if(params$method=="nnetUnLab"){
-        data = cbind(solution, as.matrix(unlabeled))
+        browser()
+        data = cbind(as.numeric(solution), as.matrix(unlabeled))
         colnames(data)=gsub(pattern=' ', replacement='', x=colnames(data))
-        form = paste("solution~", paste(colnames(data)[2:11], sep='', collapse='+'),sep='',collapse='')
-        mods[[1]] = nnet(x=as.matrix(unlabeled), y=solution, size=1)
+        form = paste("solution~", paste(colnames(data)[params$featSample], sep='', collapse='+'),sep='',collapse='')
+        mods[[1]] = neuralnet(form, data=data, hidden=c(2))
+        
+        resLabProb = compute(x=mods[[1]], covariate=labeled[-sampIndLab, params$featSample])
+        #mods[[1]] = nnet(x=as.matrix(unlabeled[,params$featSample]), y=as.numeric(solution), size=1)
         resLabProb[[1]] = predict(mods[[1]], )
         colnames(unlabeled)
       }
@@ -132,12 +150,15 @@ bbEval = function(solution){
       
       predsUnLab = resUnlabProb[[1]]
       errLab=errFunlab((resLabProb[[1]]),labeled[-sampIndLab,1])
+      errLabbyClass =errFunlabClass(resLabProb[[1]], labeled[-sampIndLab, 1])
       errUnLab=errFunUnlab(predsUnLab, labeled[,1])
     }
     if(params$returnResults) preds=predsUnLab
     else preds=NULL
       
     return(list(errLab=errLab, 
+                errLabClass=errLabbyClass,
+                errLabClassSD=-sd(errLabbyClass),
                 errUnLab=-errUnLab, 
                 preds=preds))
   }
@@ -150,7 +171,7 @@ performancePlot = function(iterativeObj.eval,...,plotC = 1){
   par(mfrow=c(plotC,plotC))
     perfList = lapply(iterativeObj.eval$history, function(x){
       return(as.data.frame(
-        matrix(unlist(x$evaluation$raw), nrow=2))
+        matrix(unlist(x$evaluation$raw), ncol=length((x$evaluation$raw)) ))
       )
     })
   
@@ -160,10 +181,10 @@ performancePlot = function(iterativeObj.eval,...,plotC = 1){
   #plot the average of the group, and the max for both metrics
   meanPerf = matrix(unlist(lapply(perfList, function(x){
                     rowMeans(x)
-                    })), nrow=2)
+                    })), nrow=nrow(perfList[[1]]))
   maxPerf = matrix(unlist(lapply(perfList, function(x){
     apply(x,1,max)
-  })), nrow=2)
+  })), nrow=nrow(perfList[[1]]))
   maxPerfEval = vector("list", length(perfList))
   for(i in 1:length(perfList)){
     maxPerfEval[[i]] = perfList[[i]][,maxList[i]] 
@@ -181,15 +202,37 @@ performancePlot = function(iterativeObj.eval,...,plotC = 1){
   lines(maxPerfEval[1, ], lty=3, col="red")
   legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
   
-  
   plot(
     meanPerf[2,], main="Unlabeled Data Error by Iteration",
-    type="l", ylim=c(min(c(meanPerf[2,], maxPerf[2,])), max(c(meanPerf[2,], maxPerf[2,])))
+    type="l", ylim=c(min(c(meanPerf[12,], maxPerf[12,])), max(c(meanPerf[12,], maxPerf[12,])))
   )
-  lines(maxPerf[2,], lty=2)
-  lines(maxPerfEval[2, ], lty=3, col='red')
+  lines(maxPerf[12,], lty=2)
+  lines(maxPerfEval[12, ], lty=3, col='red')
   legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
 
+  plot(
+    meanPerf[11,], main="Labeling accuracy by Class SD",
+    type="l", ylim=c(min(c(meanPerf[11,], maxPerf[1,])), max(c(meanPerf[11,], maxPerf[11,])))
+  )
+  lines(
+    maxPerf[11,],
+    lty=2
+  )
+  lines(maxPerfEval[11, ], lty=3, col="red")
+  legend("topright", c("avg", "max","maxPerf"), lty=c(1,2,3), col=c("black", 'black', 'red'))
+  
+  #accuracy by class (average for each class)
+  cols = rainbow(9)
+  plot(meanPerf[2,], main="Labeling accuracy by Class", col=cols[1],
+       type="l", ylim=c(min(meanPerf[2:10,]), max(meanPerf[2:10,]))
+  )
+  for(l in 3:10){
+    lines(
+      meanPerf[l,],
+      col=cols[l-2]
+    )
+  }
+  
   #now plot the number of signals being used
   numFeats = lapply(iterativeObj.eval$history,function(x){
     apply(x$solution, 2, function(y){

@@ -1,5 +1,6 @@
 #load up the libaries
 library(randomForest)
+library(e1071)
 library(bigmemory)
 library(biganalytics)
 library(parallel)
@@ -24,41 +25,47 @@ extra_data_sample=attach.big.matrix("/home/results/extra_data_sample.desc")
 
 bbTestNormSel = attach.big.matrix('/home/results/bbTestNormSel.desc')
 bbTrainNormSel = attach.big.matrix('/home/results/bbTrainNormSel.desc')
-
+bbExtraNormSel = attach.big.matrix('/home/results/bbExtraNormSel.desc')
 #load('blackbox/extra_data_sample.RData')
 
-# #pca (only have to do it once)
-# colMeansTest = colMeans(bbTest[,])
-# colVarTest = apply(bbTest, 2, var)
-# 
-# bbTestNorm = (bbTest[,]-matrix(rep(colMeansTest, nrow(bbTest)), nrow=nrow(bbTest), byrow=T))#/
-# #   matrix(rep(colVarTest, nrow(bbTest)), nrow=nrow(bbTest), byrow=T)
-# bbTrainNorm = bbTrain[,]
-# bbTrainNorm[,2:ncol(bbTrain)] = (bbTrain[,2:ncol(bbTrain)]-matrix(rep(colMeansTest, nrow(bbTrain)), nrow=nrow(bbTrain), byrow=T))#/
-# #   matrix(rep(colVarTest, nrow(bbTrain)), nrow=nrow(bbTrain), byrow=T)
+#pca (only have to do it once)
+colMeansExtra = colMeans(extra_data_sample[,])
 
-# 
-# p = pca(bbTestNorm)
-# 
-# #save the PCA's and then use them to only use the first N components (representing 90% of the variance) in the analysis.
-# k = which(cumsum(p$eig)/sum(p$eig)>.9)[1]
-# bbTestNormSel = bbTestNorm%*%p$loadings[,1:k]
-# bbTrainNormSel = bbTrainNorm
-# bbTrainNormSel[,2:(k+1)] = bbTrainNorm[,2:ncol(bbTrain)]%*%p$loadings[,1:k]
-# 
-# as.big.matrix(bbTestNormSel,backingfile="bbTestNormSel", backingpath="/home/results/")
-# as.big.matrix(bbTrainNormSel,backingfile="bbTrainNormSel", backingpath="/home/results/")
+bbExtraNorm = (extra_data_sample[,]-matrix(rep(colMeansExtra, nrow(extra_data_sample)), 
+                                           nrow=nrow(extra_data_sample), byrow=T))
+bbTestNorm = (bbTest[,]-matrix(rep(colMeansExtra, nrow(extra_data_sample)), 
+                                           nrow=nrow(extra_data_sample), byrow=T))
+bbTrainNorm = bbTrain[,]
+bbTrainNorm[,2:ncol(bbTrain)] = (bbTrain[,2:ncol(bbTrain)]-matrix(rep(colMeansExtra, nrow(bbTrain)),
+                                                                  nrow=nrow(bbTrain), byrow=T))
+
+
+p = pca(bbExtraNorm)
+
+#save the PCA's and then use them to only use the first N components (representing 90% of the variance) in the analysis.
+k = which(cumsum(p$eig)/sum(p$eig)>.9)[1]
+bbExtraNormSel = bbExtraNorm%*%p$loadings[,1:k]
+bbTestNormSel = bbTestNorm%*%p$loadings[,1:k]
+
+bbTrainNormSel = cbind(solution=bbTrainNorm[,1], bbTrainNorm[,2:ncol(bbTrain)]%*%p$loadings[,1:k])
+
+as.big.matrix(bbExtraNormSel,backingfile="bbExtraNormSel", backingpath="/home/results/")
+as.big.matrix(bbTrainNormSel,backingfile="bbTrainNormSel", backingpath="/home/results/")
+as.big.matrix(bbTestNormSel,backingfile="bbTestNormSel", backingpath="/home/results/")
 
 # #do a very simple randomForest on the lababled training data, and fit everything else into it
-sampleFeats = sample(2:ncol(bbTrain),round(ncol(bbTrain)*.5))
-sampleRows = sample(1:nrow(bbTrain), round(1*nrow(bbTrain)))
-rmodel = lda(x=bbTrain[sampleRows,sampleFeats],grouping=as.factor(bbTrain[sampleRows,1]) )
-sols = predict(rmodel, bbTest[,sampleFeats-1])$class
+data = bbTrainNormSel[,]
+colnames(data)=gsub(pattern=' ', replacement='', x=colnames(data))
+form = paste("solution~", paste(colnames(data)[1:50+1], sep='', collapse='+'),sep='',collapse='')
+nn = neuralnet(form, data=data, hidden=8, rep=2)
+solsTrain = compute(nn, data[,2:51])
+solsTest = compute(nn, bbTestNormSel[,1:50])
+solsExtra = compute(nn, bbExtraNormSel[,1:50])
 
 #newLab = predict(rmodel, bbTrain[-sampleRows, sampleFeats])
 #error on the solutions
-#errUnlab = errFunUnlab(as.numeric(sols), bbTrain[,1]) 
-#errNewLab = errFunlab(as.numeric(newLab), bbTrain[-sampleRows,1])
+errUnlab = errFunUnlab(as.numeric(solsTrain), bbTrain[,1]) 
+errNewLab = errFunlab(as.numeric(newLab), bbTrain[-sampleRows,1])
 
 # #write solutions to output file
 # write.table(file="blackbox/submission.csv", x=sprintf("%.1f", as.numeric(sols)), row.names=F, quote=F, col.names=F)
@@ -84,16 +91,16 @@ params = list(labeled="/home/results/bbTrain.desc", unlabeled="/home/results/ext
                   labLen = nrow(bbTrain), unLabLen=nrow(extra_data_sample),
                   sampIndLab=sample(1:nrow(bbTrain), round(.10*nrow(bbTrain))), 
                   sampIndUnLab=sample(1:nrow(extra_data_sample), round(.2*nrow(extra_data_sample))),
-                  parallel=T, cpus=4, weights=c(1,0), cl=cl,returnResults=F,method="ldaUnlab", OVA=F,
+                  parallel=T, cpus=4, weights=c(1,0,0), cl=cl,returnResults=F,method="ldaUnlab", OVA=F,
                   featSample = sample(1:ncol(extra_data_sample), round(.25*ncol(extra_data_sample))),
                   unLabWidth = ncol(extra_data_sample)
               )
-params = list(labeled="/home/results/bbTrainNormSel.desc", unlabeled="/home/results/bbTestNormSel.desc",
+params = list(labeled="/home/results/bbTrainNormSel.desc", unlabeled="/home/results/bbExtraNormSel.desc",
               labLen = nrow(bbTrainNormSel), unLabLen=nrow(bbTestNormSel),
-              sampIndLab=sample(1:nrow(bbTrainNormSel), round(.10*nrow(bbTrainNormSel))), 
+              sampIndLab=sample(1:nrow(bbTrainNormSel), round(.001*nrow(bbTrainNormSel))), 
               sampIndUnLab=sample(1:nrow(bbTestNormSel), round(1*nrow(bbTestNormSel))),
-              parallel=T, cpus=4, weights=c(1,0), cl=cl,returnResults=F,method="ldaUnlab", OVA=F,
-              featSample = 1:30#ncol(bbTestNormSel),#sample(1:ncol(bbTestNormSel), round(.25*ncol(bbTestNormSel))),
+              parallel=T, cpus=4, weights=c(1,0,1), cl=cl,returnResults=F,method="nnetUnLab", OVA=F,
+              featSample = 1:30,#ncol(bbTestNormSel),#sample(1:ncol(bbTestNormSel), round(.25*ncol(bbTestNormSel))),
               unLabWidth = ncol(bbTestNormSel)
 )
 #clusterExport(cl, "params")
@@ -123,9 +130,9 @@ iterativeParams = list(
 iterativeObj = list(iterativeParams=iterativeParams)
 
 # #load up a previous run and continue it another N trials
-load("iterativeObjTemp.RData")
-iterativeObj.eval=iterativeObj
-iterativeObj$iterativeParams$iterations = iterativeObj$iterativeParams$iterations+200
+# load("iterativeObjTemp.RData")
+# iterativeObj.eval=iterativeObj
+# iterativeObj$iterativeParams$iterations = iterativeObj$iterativeParams$iterations+200
 
 iterativeObj.eval = iterativeOpt(iterativeObj)
 
@@ -144,8 +151,8 @@ maxTri=length(iterativeObj.eval$history)
 featSet = iterativeObj.eval$history[[maxTri]]$solution[,
                                 which.max(iterativeObj.eval$history[[maxTri]]$evaluation$eval)]
 params$returnResults=T
-params$unlabeled = "/home/results/bbTest.desc"
-params$sampIndLab = 1:(nrow(bbTrain)-1)
+params$unlabeled = "/home/results/bbTestNormSel.desc"
+params$sampIndLab = 1:10#(nrow(bbTrain)-1)
 params$sampIndUnLab = 1:nrow(bbTest)
 
 res = bbEval(featSet)
